@@ -184,7 +184,7 @@ def load_watch_list(supabase):
 def insert_hits(supabase, rows):
     if not rows:
         return 0
-    supabase.table("secondstreet_hits").upsert(rows, on_conflict="asin,url", ignore_duplicates=True).execute()
+    supabase.table("scrape_hits").upsert(rows, on_conflict="asin,url", ignore_duplicates=True).execute()
     return len(rows)
 
 
@@ -275,7 +275,7 @@ def main():
 
     try:
         inserted = insert_hits(supabase, hits)
-        print(f"secondstreet_hits に {inserted} 件書き込みました（重複は除外）", flush=True)
+        print(f"scrape_hits に {inserted} 件書き込みました（重複は除外）", flush=True)
     except Exception as e:
         print(f"[ERROR] Supabase書き込み失敗: {e}", flush=True)
         sys.exit(1)
