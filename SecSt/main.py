@@ -78,7 +78,7 @@ def fetch_listing_page(driver, url):
     if not cards:
         return []
 
-    base = os.environ["SCRAPE_BASE_URL"].rstrip("/")
+    base = os.environ["SECST_BASE_URL"].rstrip("/")
     products = []
     for card in cards:
         a_tag = card.select_one("a.itemCard_inner")
@@ -196,12 +196,12 @@ def main():
         print(f"実行時間外のためスキップ ({hour}時 JST)", flush=True)
         sys.exit(0)
 
-    for key in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SCRAPE_BASE_URL"):
+    for key in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SECST_BASE_URL"):
         if not os.environ.get(key):
             print(f"[ERROR] 環境変数 {key} が未設定", flush=True)
             sys.exit(1)
 
-    base_url = os.environ["SCRAPE_BASE_URL"].rstrip("/")
+    base_url = os.environ["SECST_BASE_URL"].rstrip("/")
     search_urls = [base_url + path for path in SEARCH_PATHS]
 
     try:
