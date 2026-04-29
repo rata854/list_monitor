@@ -1,4 +1,8 @@
-﻿.env
-.venv/
-__pycache__/
-*.pyc
+﻿  @"                                                                                                                                .env                                                                                                                            
+  .venv/
+  __pycache__/
+  *.pyc
+  CLAUDE.md
+  supabase/
+  sheet_sync/
+  "@ | Out-File C:\Users\nitih\claude\list_monitor\.gitignore -Encoding utf8
