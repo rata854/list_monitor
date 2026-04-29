@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: GitHubActions/secondstreet
+        working-directory: SecSt
 
     steps:
       - uses: actions/checkout@v4
@@ -27,5 +27,4 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SCRAPE_BASE_URL: ${{ secrets.SCRAPE_BASE_URL }}
-          SCRAPE_SEARCH_URLS: ${{ secrets.SCRAPE_SEARCH_URLS }}
         run: uv run python main.py

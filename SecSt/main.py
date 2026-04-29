@@ -30,6 +30,12 @@ CONFIG = {
     "DETAIL_SLEEP_MAX": 4.0,
 }
 
+SEARCH_PATHS = [
+    "/search?keyword=&selected_category=990001&minPrice=4000&maxPrice=&other%5B%5D=nflg&sortBy=arrival&category=990001",
+    "/search?category=100001&minPrice=4000&other%5B%5D=nflg&sortBy=arrival",
+    "/search?keyword=&selected_category=110001&minPrice=4000&maxPrice=&other%5B%5D=nflg&sortBy=arrival&category=110001",
+]
+
 
 def random_sleep(min_sec, max_sec):
     time.sleep(random.uniform(min_sec, max_sec))
@@ -72,14 +78,14 @@ def fetch_listing_page(driver, url):
     if not cards:
         return []
 
-    base_url = os.environ["SCRAPE_BASE_URL"].rstrip("/")
+    base = os.environ["SCRAPE_BASE_URL"].rstrip("/")
     products = []
     for card in cards:
         a_tag = card.select_one("a.itemCard_inner")
         if not a_tag:
             continue
         href = a_tag.get("href", "")
-        product_url = f"{base_url}{href}" if href.startswith("/") else href
+        product_url = f"{base}{href}" if href.startswith("/") else href
 
         name_tag = a_tag.select_one("p.itemCard_name")
         name = name_tag.get_text(strip=True) if name_tag else ""
@@ -190,12 +196,13 @@ def main():
         print(f"実行時間外のためスキップ ({hour}時 JST)", flush=True)
         sys.exit(0)
 
-    for key in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SCRAPE_BASE_URL", "SCRAPE_SEARCH_URLS"):
+    for key in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SCRAPE_BASE_URL"):
         if not os.environ.get(key):
             print(f"[ERROR] 環境変数 {key} が未設定", flush=True)
             sys.exit(1)
 
-    search_urls = [u.strip() for u in os.environ["SCRAPE_SEARCH_URLS"].split(",") if u.strip()]
+    base_url = os.environ["SCRAPE_BASE_URL"].rstrip("/")
+    search_urls = [base_url + path for path in SEARCH_PATHS]
 
     try:
         supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
