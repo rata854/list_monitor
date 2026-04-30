@@ -3,10 +3,12 @@ import sys
 import random
 import re
 import time
+import traceback
 from datetime import datetime
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
 import pytz
+from pathlib import Path
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -18,7 +20,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from supabase import create_client
 
-load_dotenv()
+load_dotenv(Path(__file__).parents[2] / ".secrets" / "github_actions.env")
 
 CONFIG = {
     "DEFAULT_FEE": 770,
@@ -70,7 +72,6 @@ def fetch_listing_page(driver, url):
             EC.presence_of_element_located((By.CSS_SELECTOR, "li.itemCard"))
         )
     except Exception:
-        # 商品なし（0件ページ）は正常終了
         return []
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -118,7 +119,6 @@ def fetch_detail_description(driver, url):
         soup = BeautifulSoup(driver.page_source, "html.parser")
         parts = []
 
-        # 商品ランク
         rank_ul = soup.select_one("ul#conditionRank")
         if rank_ul:
             for cls, label in RANK_CLASS_MAP.items():
@@ -126,14 +126,12 @@ def fetch_detail_description(driver, url):
                     parts.append(f"【{label}】")
                     break
 
-        # ショップコメント
         comment = soup.select_one("#shopComment")
         if comment:
             text = comment.get_text(strip=True)
             if text:
                 parts.append(text)
 
-        # 商品スペック（型番・年式・商品情報など）
         spec_dl = soup.select_one("dl.golf_info")
         if spec_dl:
             items = []
@@ -147,7 +145,7 @@ def fetch_detail_description(driver, url):
 
         return " ".join(parts)[:1500]
     except Exception as e:
-        print(f"[WARN] 詳細ページ取得失敗 {url}: {e}", flush=True)
+        print(f"[WARN] 詳細ページ取得失敗: {e}", flush=True)
         return ""
 
 
@@ -188,41 +186,54 @@ def insert_hits(supabase, rows):
     return len(rows)
 
 
-def main():
-    jst = pytz.timezone("Asia/Tokyo")
-    now_jst = datetime.now(jst)
-    hour = now_jst.hour
-    if hour < 6 or hour >= 20:
-        print(f"実行時間外のためスキップ ({hour}時 JST)", flush=True)
-        sys.exit(0)
+def log_execution(supabase_client, *, task_name, status, started_at,
+                  severity=None, error_type=None, error_message=None,
+                  stack_trace=None, debug_info=None):
+    try:
+        completed_at = datetime.now(pytz.utc)
+        duration_ms = int((completed_at - started_at).total_seconds() * 1000)
+        if severity is None:
+            severity = "info" if status == "success" else "error"
+        supabase_client.table("execution_logs").insert({
+            "source_type": "github_actions",
+            "task_name": task_name,
+            "status": status,
+            "severity": severity,
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "duration_ms": duration_ms,
+            "error_type": error_type,
+            "error_message": error_message,
+            "stack_trace": stack_trace,
+            "debug_info": debug_info,
+        }).execute()
+    except Exception as e:
+        print(f"[WARN] ログ書き込み失敗（無視）: {e}", flush=True)
 
-    for key in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SECST_BASE_URL"):
-        if not os.environ.get(key):
-            print(f"[ERROR] 環境変数 {key} が未設定", flush=True)
-            sys.exit(1)
 
+def _run(supabase, now_jst):
     base_url = os.environ["SECST_BASE_URL"].rstrip("/")
     search_urls = [base_url + path for path in SEARCH_PATHS]
-
-    try:
-        supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
-    except Exception as e:
-        print(f"[ERROR] Supabase接続失敗: {e}", flush=True)
-        sys.exit(1)
 
     watch_list = load_watch_list(supabase)
     print(f"監視リスト件数: {len(watch_list)}", flush=True)
     if not watch_list:
         print("有効な監視対象がありません", flush=True)
-        sys.exit(0)
+        return {
+            "status": "skipped",
+            "exit_code": 0,
+            "severity": "info",
+            "debug_info": {"watch_list_count": 0},
+        }
 
+    all_products = []
+    deduped = []
     driver = make_driver()
     try:
-        all_products = []
-        for search_url in search_urls:
+        for i, search_url in enumerate(search_urls):
             for page in range(1, CONFIG["FETCH_PAGES"] + 1):
                 page_url = set_page_param(search_url, page)
-                print(f"取得中: page={page} ({search_url[:60]}...)", flush=True)
+                print(f"取得中: page={page} (path={i+1}/{len(search_urls)})", flush=True)
                 products = fetch_listing_page(driver, page_url)
                 all_products.extend(products)
                 print(f"  → {len(products)}件", flush=True)
@@ -236,7 +247,18 @@ def main():
 
         if not deduped:
             print("[ERROR] 商品カード取得0件（HTML構造変更の可能性）", flush=True)
-            sys.exit(1)
+            return {
+                "status": "failure",
+                "exit_code": 1,
+                "error_type": "NoProductsFetched",
+                "error_message": "商品カード取得0件",
+                "debug_info": {
+                    "watch_list_count": len(watch_list),
+                    "products_fetched": 0,
+                    "paths_count": len(SEARCH_PATHS),
+                    "pages_per_path": CONFIG["FETCH_PAGES"],
+                },
+            }
 
         today = now_jst.strftime("%Y-%m-%d")
         hits = []
@@ -250,7 +272,7 @@ def main():
                 if key in pushed:
                     continue
                 pushed.add(key)
-                print(f"★ HIT: {product['name']} / ¥{product['price']} / {product['url']}", flush=True)
+                print(f"★ HIT: {product['name']} / ¥{product['price']}", flush=True)
                 hits.append({
                     "asin": watch["asin_sell"],
                     "url": product["url"],
@@ -271,14 +293,105 @@ def main():
 
     if not hits:
         print("条件に合う商品はありませんでした", flush=True)
-        sys.exit(0)
+        return {
+            "status": "skipped",
+            "exit_code": 0,
+            "severity": "info",
+            "debug_info": {
+                "watch_list_count": len(watch_list),
+                "products_fetched": len(deduped),
+                "hits_count": 0,
+                "paths_count": len(SEARCH_PATHS),
+                "pages_per_path": CONFIG["FETCH_PAGES"],
+            },
+        }
 
     try:
         inserted = insert_hits(supabase, hits)
         print(f"scrape_hits に {inserted} 件書き込みました（重複は除外）", flush=True)
+        return {
+            "status": "success",
+            "exit_code": 0,
+            "debug_info": {
+                "watch_list_count": len(watch_list),
+                "products_fetched": len(deduped),
+                "hits_count": inserted,
+                "paths_count": len(SEARCH_PATHS),
+                "pages_per_path": CONFIG["FETCH_PAGES"],
+            },
+        }
     except Exception as e:
         print(f"[ERROR] Supabase書き込み失敗: {e}", flush=True)
+        return {
+            "status": "failure",
+            "exit_code": 1,
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "stack_trace": traceback.format_exc(),
+            "debug_info": {
+                "watch_list_count": len(watch_list),
+                "products_fetched": len(deduped),
+                "hits_count": len(hits),
+                "paths_count": len(SEARCH_PATHS),
+                "pages_per_path": CONFIG["FETCH_PAGES"],
+            },
+        }
+
+
+def main():
+    jst = pytz.timezone("Asia/Tokyo")
+    now_jst = datetime.now(jst)
+    hour = now_jst.hour
+    started_at = datetime.now(pytz.utc)
+
+    for key in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SECST_BASE_URL"):
+        if not os.environ.get(key):
+            print(f"[ERROR] 環境変数 {key} が未設定", flush=True)
+            sys.exit(1)
+
+    try:
+        supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
+    except Exception as e:
+        print(f"[ERROR] Supabase接続失敗: {e}", flush=True)
         sys.exit(1)
+
+    if hour < 6 or hour >= 20:
+        print(f"実行時間外のためスキップ ({hour}時 JST)", flush=True)
+        log_execution(
+            supabase,
+            task_name="scrape_monitor",
+            status="skipped",
+            severity="info",
+            started_at=started_at,
+            debug_info={"hour_jst": hour},
+        )
+        sys.exit(0)
+
+    try:
+        result = _run(supabase, now_jst)
+    except Exception as e:
+        print(f"[ERROR] 予期しないエラー: {e}", flush=True)
+        result = {
+            "status": "failure",
+            "exit_code": 1,
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "stack_trace": traceback.format_exc(),
+            "debug_info": {},
+        }
+
+    log_execution(
+        supabase,
+        task_name="scrape_monitor",
+        status=result["status"],
+        severity=result.get("severity"),
+        started_at=started_at,
+        error_type=result.get("error_type"),
+        error_message=result.get("error_message"),
+        stack_trace=result.get("stack_trace"),
+        debug_info=result.get("debug_info"),
+    )
+    sys.exit(result["exit_code"])
 
 
 if __name__ == "__main__":
