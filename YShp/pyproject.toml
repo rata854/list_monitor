@@ -1,0 +1,10 @@
+[project]
+name = "yshp-monitor"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.31",
+    "supabase>=2.0",
+    "pytz>=2024.1",
+    "python-dotenv>=1.0",
+]
