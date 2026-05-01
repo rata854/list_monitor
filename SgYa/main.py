@@ -39,7 +39,7 @@ CONFIG = {
 SEARCH_PATHS = [
     "/search?category=8&search_word=&rankBy=modificationTime:descending"
     "&adult_s=2&price=[4000,]&sale_classified=%E4%B8%AD%E5%8F%A4"
-    "&grid=f&ck=true",
+    "&ck=true",
 ]
 
 
