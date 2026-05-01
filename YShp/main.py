@@ -75,7 +75,7 @@ def search_items(app_id, api_base, watch):
             "price":       int(price),
             "image":       item.get("image", {}).get("medium", ""),
             "condition":   item.get("condition", ""),
-            "description": item.get("description", "")[:1500],
+            "description": (item.get("description") or "")[:1500],
         })
 
     return results
