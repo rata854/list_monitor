@@ -1,0 +1,35 @@
+name: Resale Monitor Rkt
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Rkt
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run monitor
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RKT_APP_ID: ${{ secrets.RKT_APP_ID }}
+          RKT_ACCESS_KEY: ${{ secrets.RKT_ACCESS_KEY }}
+          RKT_API_BASE: ${{ secrets.RKT_API_BASE }}
+        run: uv run python main.py
