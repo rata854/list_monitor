@@ -37,7 +37,9 @@ CONFIG = {
 }
 
 SEARCH_PATHS = [
-    "/search?category=8&search_word=&hendou=%E6%96%B0%E5%85%A5%E8%8D%B7&price=[4000,]&sale_classified=%E4%B8%AD%E5%8F%A4",
+    "/search?category=8&search_word=&adult_s=2&ck=true"
+    "&hendou=%E6%96%B0%E5%85%A5%E8%8D%B7&price=[4000,]"
+    "&rankBy=modificationTime%3Adescending&sale_classified=%E4%B8%AD%E5%8F%A4",
 ]
 
 
