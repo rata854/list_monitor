@@ -28,6 +28,8 @@ CONFIG = {
     "SKIP_PATTERN1": "に一致する商品はありません",
     "SKIP_PATTERN2": "条件に一致する商品は見つかりませんでした",
     "FEATURED_HEADER": "注目のオークション",
+    "PRODUCT_WAIT":    "li.Product",
+    "PRODUCT_CARD":    r'(?=<li[^>]+class="[^"]*Product[^"]*")',
     "PRODUCT_ID":      r'data-auction-id="([^"]+)"',
     "PRODUCT_URL":     r'<a[^>]+class="[^"]*Product__imageLink[^"]*"[^>]+href="([^"]+)"',
     "PRODUCT_TITLE":   r'data-auction-title="([^"]+)"',
@@ -80,7 +82,7 @@ def fetch_products(driver, url):
         driver.get(url)
         try:
             WebDriverWait(driver, CONFIG["PAGE_LOAD_TIMEOUT"]).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "li.Product"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, CONFIG["PRODUCT_WAIT"]))
             )
         except Exception:
             pass
@@ -97,7 +99,7 @@ def fetch_products(driver, url):
 
         products = []
         seen_ids = set()
-        for card in re.split(r'(?=<li[^>]+class="[^"]*Product[^"]*")', html):
+        for card in re.split(CONFIG["PRODUCT_CARD"], html):
             if 'data-auction-id' not in card:
                 continue
 
