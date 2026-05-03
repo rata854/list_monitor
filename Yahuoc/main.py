@@ -86,7 +86,6 @@ def fetch_products(driver, url):
         except Exception:
             pass
         html = driver.page_source
-        print(f"[DEBUG] title={driver.title!r} html_len={len(html)}", flush=True)
 
         if is_skip_page(html):
             return []
