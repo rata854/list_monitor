@@ -27,9 +27,8 @@ CONFIG = {
     "SLEEP_MAX": 12.0,
     "SKIP_PATTERN1": "に一致する商品はありません",
     "SKIP_PATTERN2": "条件に一致する商品は見つかりませんでした",
-    "FEATURED_HEADER": "注目のオークション",
     "PRODUCT_WAIT":    "li.Product",
-    "PRODUCT_CARD":    r'(?=<li[^>]+class="[^"]*Product[^"]*")',
+    "PRODUCT_CARD":    r'(?=<li[^>]+class="Product[ ">])',
     "PRODUCT_ID":      r'data-auction-id="([^"]+)"',
     "PRODUCT_URL":     r'<a[^>]+class="[^"]*Product__imageLink[^"]*"[^>]+href="([^"]+)"',
     "PRODUCT_TITLE":   r'data-auction-title="([^"]+)"',
@@ -90,12 +89,6 @@ def fetch_products(driver, url):
 
         if is_skip_page(html):
             return []
-
-        idx = html.find(CONFIG["FEATURED_HEADER"])
-        if idx != -1:
-            ul_start = html.find("<ul", idx)
-            ul_end = html.find("</ul>", ul_start) + 5
-            html = html[ul_end:]
 
         products = []
         seen_ids = set()
