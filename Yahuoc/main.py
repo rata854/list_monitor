@@ -1,3 +1,4 @@
+import html
 import os
 import re
 import sys
@@ -120,13 +121,13 @@ def fetch_products(driver, url):
                 continue
 
             fee = parse_postage(postage_m.group(1)) if postage_m else None
-            rating = rating_m.group(1).strip() if rating_m else ""
+            rating = rating_m.group(1).strip().rstrip("%") if rating_m else ""
 
             products.append({
                 "id": product_id,
                 "url": url_m.group(1),
                 "title": title_m.group(1),
-                "image": img_m.group(1) if img_m else "",
+                "image": html.unescape(img_m.group(1)) if img_m else "",
                 "price": price,
                 "fee": fee,
                 "seller_rating": rating,
@@ -248,7 +249,7 @@ def _run(supabase, now_jst):
                     "fee":         product["fee"],
                     "image":       product["image"],
                     "title":       product["title"],
-                    "description": f"評価:{product['seller_rating']}",
+                    "description": product['seller_rating'],
                     "mall":        "Yahuoc",
                 })
 
