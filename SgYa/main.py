@@ -71,11 +71,13 @@ def make_driver():
 
 def fetch_listing_page(driver, url):
     driver.get(url)
+    print(f"[DEBUG] title={driver.title!r} current_url={driver.current_url!r} html_len={len(driver.page_source)}", flush=True)
     try:
         WebDriverWait(driver, CONFIG["PAGE_LOAD_TIMEOUT"]).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, CONFIG["ITEM_CARD"]))
         )
     except Exception:
+        print(f"[DEBUG] WebDriverWait timeout — no '{CONFIG['ITEM_CARD']}' found", flush=True)
         return []
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
