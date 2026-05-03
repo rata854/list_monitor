@@ -11,10 +11,13 @@ import pytz
 from pathlib import Path
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-import undetected_chromedriver as uc
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 from supabase import create_client
 
 load_dotenv(Path(__file__).parents[2] / ".secrets" / "github_actions.env")
@@ -52,24 +55,28 @@ def set_page_param(url, page):
     return urlunparse(parsed._replace(query=new_query))
 
 
-def make_driver():
-    options = uc.ChromeOptions()
-    options.add_argument("--headless=new")
+def make_driver(headless=True):
+    options = Options()
+    if headless:
+        options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
-    return uc.Chrome(options=options)
+    options.add_argument(
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+    service = Service(ChromeDriverManager().install())
+    return webdriver.Chrome(service=service, options=options)
 
 
 def fetch_listing_page(driver, url):
     driver.get(url)
-    print(f"[DEBUG] title={driver.title!r} current_url={driver.current_url!r} html_len={len(driver.page_source)}", flush=True)
     try:
         WebDriverWait(driver, CONFIG["PAGE_LOAD_TIMEOUT"]).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, CONFIG["ITEM_CARD"]))
         )
     except Exception:
-        print(f"[DEBUG] WebDriverWait timeout — no '{CONFIG['ITEM_CARD']}' found", flush=True)
         return []
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -189,7 +196,7 @@ def _run(supabase, now_jst):
 
     all_products = []
     deduped = []
-    driver = make_driver()
+    driver = make_driver(headless=True)
     try:
         for i, search_url in enumerate(search_urls):
             for page in range(1, CONFIG["FETCH_PAGES"] + 1):
