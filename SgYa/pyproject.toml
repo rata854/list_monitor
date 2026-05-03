@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "undetected-chromedriver>=3.5",
+    "setuptools>=68.0",
     "beautifulsoup4>=4.12",
     "supabase>=2.0",
     "pytz>=2024.1",
