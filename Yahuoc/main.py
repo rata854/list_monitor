@@ -86,14 +86,14 @@ def fetch_products(driver, url):
             )
         except Exception:
             pass
-        html = driver.page_source
+        source = driver.page_source
 
-        if is_skip_page(html):
+        if is_skip_page(source):
             return []
 
         products = []
         seen_ids = set()
-        for card in re.split(CONFIG["PRODUCT_CARD"], html):
+        for card in re.split(CONFIG["PRODUCT_CARD"], source):
             if 'data-auction-id' not in card:
                 continue
 
