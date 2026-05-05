@@ -151,6 +151,14 @@ def matches(product, watch):
         if kw.upper() not in title_upper:
             return False
 
+    rating = product.get("seller_rating", "")
+    if rating:
+        try:
+            if float(rating) < 98:
+                return False
+        except ValueError:
+            pass
+
     effective_fee = product["fee"] if product["fee"] is not None else 0
     return (product["price"] + effective_fee) <= float(watch["final_price"])
 
