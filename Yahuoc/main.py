@@ -140,17 +140,6 @@ def fetch_products(driver, url):
 
 
 def matches(product, watch):
-    code_upper = watch["product_code_out"].upper()
-    title_upper = product["title"].upper()
-
-    if code_upper not in title_upper:
-        return False
-
-    must_kw = watch.get("must_keywords") or ""
-    for kw in must_kw.split():
-        if kw.upper() not in title_upper:
-            return False
-
     rating = product.get("seller_rating", "")
     if rating:
         try:
@@ -158,9 +147,7 @@ def matches(product, watch):
                 return False
         except ValueError:
             pass
-
-    effective_fee = product["fee"] if product["fee"] is not None else 0
-    return (product["price"] + effective_fee) <= float(watch["final_price"])
+    return True
 
 
 def load_watch_list(supabase):
