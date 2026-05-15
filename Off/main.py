@@ -138,7 +138,9 @@ def matches(product, watch):
     item_code_upper = product["code"].upper()
     name_upper = f"{product['brand']} {product['name']}".upper()
 
-    if code_upper not in item_code_upper and code_upper not in name_upper:
+    searchable = f"{item_code_upper} {name_upper}"
+    tokens = watch["product_code_out"].replace("　", " ").upper().split()
+    if not tokens or not all(t in searchable for t in tokens):
         return False
 
     must_kw = watch.get("must_keywords") or ""
