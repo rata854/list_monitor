@@ -103,8 +103,8 @@ def search_items(app_id, access_key, api_base, watch):
 
 def matches(item, watch):
     name_upper = item["name"].upper()
-    code_upper = watch["product_code_out"].upper()
-    if code_upper not in name_upper:
+    tokens = watch["product_code_out"].replace("　", " ").upper().split()
+    if not tokens or not all(t in name_upper for t in tokens):
         return False
 
     must_kw = watch.get("must_keywords") or ""
