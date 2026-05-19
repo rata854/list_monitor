@@ -1,8 +1,6 @@
 name: Resale Monitor Yahuoc
 
 on:
-  schedule:
-    - cron: '0 15 * * *'
   workflow_dispatch:
 
 env:
