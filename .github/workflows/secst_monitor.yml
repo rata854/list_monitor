@@ -1,8 +1,6 @@
 name: Resale Monitor SecSt
 
 on:
-  schedule:
-    - cron: '0 * * * *'
   workflow_dispatch:
 
 env:
