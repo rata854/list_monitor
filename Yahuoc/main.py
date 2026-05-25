@@ -37,8 +37,22 @@ CONFIG = {
     "PRODUCT_PRICE":   r'class="[^"]*Product__priceValue[^"]*u-textRed[^"]*"[^>]*>([\d,]+)',
     "PRODUCT_POSTAGE": r'class="[^"]*Product__postage[^"]*"[^>]*>(.*?)</p>',
     "PRODUCT_RATING":  r'class="[^"]*Product__ratingValue[^"]*"[^>]*>([^<]+)',
-    # "PRODUCT_TIME":  r'class="[^"]*Product__time[^"]*"[^>]*>([^<]+)',  # 残り時間（未使用）
+    "PRODUCT_END_TIME": r'（(\d{2}/\d{2} \d{2}:\d{2})終了）',
 }
+
+
+def parse_end_time(text):
+    try:
+        jst = pytz.timezone("Asia/Tokyo")
+        now = datetime.now(jst)
+        month, rest = text.split("/", 1)
+        day, time_part = rest.split(" ", 1)
+        end_month = int(month)
+        end_day = int(day)
+        year = now.year + (1 if end_month < now.month or (end_month == now.month and end_day < now.day - 7) else 0)
+        return f"{year}-{month}-{day} {time_part}"
+    except Exception:
+        return ""
 
 
 def random_sleep(min_sec, max_sec):
@@ -111,6 +125,7 @@ def fetch_products(driver, url):
             price_m = re.search(CONFIG["PRODUCT_PRICE"], card)
             postage_m = re.search(CONFIG["PRODUCT_POSTAGE"], card, re.DOTALL)
             rating_m = re.search(CONFIG["PRODUCT_RATING"], card)
+            end_time_m = re.search(CONFIG["PRODUCT_END_TIME"], card)
 
             if not (url_m and title_m and price_m):
                 continue
@@ -122,6 +137,7 @@ def fetch_products(driver, url):
 
             fee = parse_postage(postage_m.group(1)) if postage_m else None
             rating = rating_m.group(1).strip().rstrip("%") if rating_m else ""
+            end_time = parse_end_time(end_time_m.group(1)) if end_time_m else ""
 
             products.append({
                 "id": product_id,
@@ -131,6 +147,7 @@ def fetch_products(driver, url):
                 "price": price,
                 "fee": fee,
                 "seller_rating": rating,
+                "end_time": end_time,
             })
 
         return products
@@ -222,10 +239,7 @@ def _run(supabase, now_jst):
         pushed = set()
 
         for i, watch in enumerate(watch_list):
-            search_url = (
-                watch["yahuoc_store_url"] if float(watch["final_price"]) >= CONFIG["PRICE_THRESHOLD"]
-                else watch["yahuoc_all_url"]
-            ) or watch.get("yahuoc_store_url") or watch.get("yahuoc_all_url")
+            search_url = watch.get("yahuoc_all_url")
             if not search_url:
                 continue
 
@@ -241,17 +255,17 @@ def _run(supabase, now_jst):
                 pushed.add(key)
                 print(f"★ HIT: {product['title']} / ¥{product['price']}", flush=True)
                 hits.append({
-                    "asin":        watch["asin_sell"],
-                    "url":         product["url"],
-                    "date":        today,
-                    "price":       product["price"],
-                    "fee":         product["fee"],
-                    "image":       product["image"],
-                    "title":       product["title"],
-                    "description": product['seller_rating'],
-                    "mall":        "Yahuoc",
+                    "asin":     watch["asin_sell"],
+                    "url":      product["url"],
+                    "date":     today,
+                    "price":    product["price"],
+                    "fee":      product["fee"],
+                    "image":    product["image"],
+                    "title":    product["title"],
+                    "rating":   product["seller_rating"],
+                    "end_time": product["end_time"],
+                    "mall":     "Yahuoc",
                 })
-
             if i < len(watch_list) - 1:
                 random_sleep(CONFIG["SLEEP_MIN"], CONFIG["SLEEP_MAX"])
 
