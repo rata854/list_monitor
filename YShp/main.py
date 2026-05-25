@@ -99,17 +99,19 @@ def matches(item, watch):
         if ng in item["name"]:
             return False
 
+    excl_kw = watch.get("excluded_keywords") or ""
+    for kw in excl_kw.split():
+        if kw in item["name"]:
+            return False
+
     return (item["price"] + CONFIG["DEFAULT_FEE"]) <= float(watch["final_price"])
 
 
 def load_watch_list(supabase):
-    all_resp = supabase.table("product_list").select("asin_sell, auto_flag", count="exact").execute()
-    print(f"  product_list 総行数: {all_resp.count}", flush=True)
-
     resp = supabase.table("product_list").select(
-        "asin_sell, product_code_out, must_keywords, final_price, auto_flag"
-    ).eq("auto_flag", True).execute()
-    print(f"  auto_flag=true の行数: {len(resp.data)}", flush=True)
+        "asin_sell, product_code_out, must_keywords, excluded_keywords, final_price"
+    ).execute()
+    print(f"  product_list 取得件数: {len(resp.data)}", flush=True)
 
     filtered = [r for r in resp.data if r.get("asin_sell") and r.get("product_code_out") and r.get("final_price")]
     skipped = len(resp.data) - len(filtered)
@@ -253,6 +255,8 @@ def main():
     hour = now_jst.hour
     started_at = datetime.now(pytz.utc)
 
+    dry_run = "--dry-run" in sys.argv
+
     for key in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "YA_APP_ID", "YA_API_BASE"):
         if not os.environ.get(key):
             print(f"[ERROR] 環境変数 {key} が未設定", flush=True)
@@ -263,6 +267,11 @@ def main():
     except Exception as e:
         print(f"[ERROR] Supabase接続失敗: {e}", flush=True)
         sys.exit(1)
+
+    if dry_run:
+        watch_list = load_watch_list(supabase)
+        print(f"[DRY RUN] 監視リスト件数: {len(watch_list)}", flush=True)
+        sys.exit(0)
 
     if hour < 5 or hour >= 20:
         print(f"実行時間外のためスキップ ({hour}時 JST)", flush=True)
