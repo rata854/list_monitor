@@ -22,16 +22,25 @@ HEADERS = {
     "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
 }
 
 CONFIG = {
     "DEFAULT_FEE": 600,
     "FETCH_PAGES": 5,
     "MAX_PRODUCTS": 200,
-    "SLEEP_LISTING_MIN": 3.0,
-    "SLEEP_LISTING_MAX": 5.0,
-    "SLEEP_DETAIL_MIN": 2.0,
-    "SLEEP_DETAIL_MAX": 4.0,
+    "SLEEP_LISTING_MIN": 4.0,
+    "SLEEP_LISTING_MAX": 8.0,
+    "SLEEP_DETAIL_MIN": 3.0,
+    "SLEEP_DETAIL_MAX": 6.0,
+    "RETRY_SLEEP_MIN": 10.0,
+    "RETRY_SLEEP_MAX": 20.0,
     "SEARCH_PATH": "/search/?s=1&exso=1&min=4000&rank=3&rank=4&rank=5",
     "PRODUCT_PATH": "/product/",
     # CSS selectors (listing page)
@@ -61,12 +70,15 @@ def make_session():
 
 
 def fetch_listing_page(session, base_url, page):
+    """(products, page_stat) を返す。page_stat は {status, html_len, snippet} の dict。"""
     url = f"{base_url}{CONFIG['SEARCH_PATH']}&p={page}"
     try:
         resp = session.get(url, timeout=15)
+        stat = {"status": resp.status_code, "html_len": len(resp.text)}
         if resp.status_code != 200:
+            stat["snippet"] = resp.text[:300]
             print(f"[WARN] 一覧取得 HTTP {resp.status_code} (page={page})", flush=True)
-            return []
+            return [], stat
         html = resp.text
 
         products = []
@@ -108,10 +120,12 @@ def fetch_listing_page(session, base_url, page):
                 "price": price,
             })
 
-        return products
+        if not products:
+            stat["snippet"] = html[:300]
+        return products, stat
     except Exception as e:
         print(f"[WARN] 一覧取得エラー (page={page}): {e}", flush=True)
-        return []
+        return [], {"status": None, "html_len": 0, "error": str(e)}
 
 
 def fetch_description(session, base_url, product_id):
@@ -218,16 +232,41 @@ def _run(supabase, now_jst):
     session = make_session()
     all_products = []
     seen_ids = set()
+    page_stats = []
+    consecutive_empty = 0
+
     for page in range(1, CONFIG["FETCH_PAGES"] + 1):
-        products = fetch_listing_page(session, base_url, page)
+        products, stat = fetch_listing_page(session, base_url, page)
+        page_stats.append({"page": page, **stat})
         new_products = [p for p in products if p["id"] not in seen_ids]
         for p in new_products:
             seen_ids.add(p["id"])
         all_products.extend(new_products)
-        print(f"取得中: page={page} → {len(products)}件", flush=True)
+        print(f"取得中: page={page} → {len(products)}件 (HTTP {stat.get('status')})", flush=True)
+
         if not products:
-            break
-        random_sleep(CONFIG["SLEEP_LISTING_MIN"], CONFIG["SLEEP_LISTING_MAX"])
+            consecutive_empty += 1
+            # 2ページ連続0件かつまだ商品0件 → セッション再作成してリトライ
+            if consecutive_empty >= 2 and not all_products:
+                print("[WARN] 連続0件のためセッション再作成してリトライ", flush=True)
+                random_sleep(CONFIG["RETRY_SLEEP_MIN"], CONFIG["RETRY_SLEEP_MAX"])
+                session = make_session()
+                retry_products, retry_stat = fetch_listing_page(session, base_url, 1)
+                page_stats.append({"page": f"retry_p1", **retry_stat})
+                print(f"リトライ page=1 → {len(retry_products)}件 (HTTP {retry_stat.get('status')})", flush=True)
+                if retry_products:
+                    new_retry = [p for p in retry_products if p["id"] not in seen_ids]
+                    for p in new_retry:
+                        seen_ids.add(p["id"])
+                    all_products.extend(new_retry)
+                    consecutive_empty = 0
+                else:
+                    break
+            else:
+                break
+        else:
+            consecutive_empty = 0
+            random_sleep(CONFIG["SLEEP_LISTING_MIN"], CONFIG["SLEEP_LISTING_MAX"])
 
     if len(all_products) > CONFIG["MAX_PRODUCTS"]:
         all_products = all_products[:CONFIG["MAX_PRODUCTS"]]
@@ -244,7 +283,8 @@ def _run(supabase, now_jst):
             "debug_info": {
                 "watch_list_count": len(watch_list),
                 "products_fetched": 0,
-                "pages_fetched": CONFIG["FETCH_PAGES"],
+                "pages_fetched": len(page_stats),
+                "page_stats": page_stats,
             },
         }
 
@@ -289,6 +329,7 @@ def _run(supabase, now_jst):
                 "watch_list_count": len(watch_list),
                 "products_fetched": len(all_products),
                 "hits_count": 0,
+                "page_stats": page_stats,
             },
         }
 
@@ -302,6 +343,7 @@ def _run(supabase, now_jst):
                 "watch_list_count": len(watch_list),
                 "products_fetched": len(all_products),
                 "hits_count": inserted,
+                "page_stats": page_stats,
             },
         }
     except Exception as e:
@@ -316,6 +358,7 @@ def _run(supabase, now_jst):
                 "watch_list_count": len(watch_list),
                 "products_fetched": len(all_products),
                 "hits_count": len(hits),
+                "page_stats": page_stats,
             },
         }
 
