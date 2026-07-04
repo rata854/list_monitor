@@ -21,8 +21,8 @@ CONFIG = {
     "FLUSH_INTERVAL": 90,
     "PRICE_FROM_RATIO": 0.7,
     "API_HEADERS": {
-        "Origin": "https://REDACTED",
-        "Referer": "https://REDACTED",
+        "Origin": os.getenv("RKT_ORIGIN", ""),
+        "Referer": os.getenv("RKT_ORIGIN", ""),
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     },
     "NG_WORDS": [
@@ -278,7 +278,7 @@ def main():
 
     dry_run = "--dry-run" in sys.argv
 
-    for key in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "RKT_APP_ID", "RKT_ACCESS_KEY", "RKT_API_BASE"):
+    for key in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "RKT_APP_ID", "RKT_ACCESS_KEY", "RKT_API_BASE", "RKT_ORIGIN"):
         if not os.environ.get(key):
             print(f"[ERROR] 環境変数 {key} が未設定", flush=True)
             sys.exit(1)

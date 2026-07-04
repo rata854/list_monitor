@@ -30,4 +30,5 @@ jobs:
           RKT_APP_ID: ${{ secrets.RKT_APP_ID }}
           RKT_ACCESS_KEY: ${{ secrets.RKT_ACCESS_KEY }}
           RKT_API_BASE: ${{ secrets.RKT_API_BASE }}
+          RKT_ORIGIN: ${{ secrets.RKT_ORIGIN }}
         run: uv run python main.py
