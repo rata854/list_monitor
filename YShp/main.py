@@ -11,7 +11,7 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
-load_dotenv(Path(__file__).parents[2] / ".secrets" / "github_actions.env")
+load_dotenv(Path(__file__).parents[3] / ".secrets" / "github_actions.env")
 
 CONFIG = {
     "DEFAULT_FEE": 0,
@@ -20,6 +20,9 @@ CONFIG = {
     "SLEEP_MAX": 5.0,
     "FLUSH_INTERVAL": 90,
     "PRICE_FROM_RATIO": 0.7,
+    "DEFAULT_POINT_RATE": 1,
+    "POINT_BONUS": 6,
+    "MAX_POINT_RATE_MARGIN": 20,
     "NG_WORDS": [
         "難あり", "欠品", "訳あり", "ジャンク", "現状品",
         "互換", "のみ", "おまけ", "レンタル", "修理",
@@ -36,7 +39,9 @@ def random_sleep(min_sec, max_sec):
 def search_items(app_id, api_base, watch):
     final_price = float(watch["final_price"])
     price_from = int(final_price * CONFIG["PRICE_FROM_RATIO"])
-    price_to = int(final_price)
+    # ポイント還元分（API倍率＋固定加算）を考慮し、表示価格の上限は実質価格の上限より広めに取る
+    point_margin = CONFIG["MAX_POINT_RATE_MARGIN"] + CONFIG["POINT_BONUS"]
+    price_to = int(final_price / (1 - point_margin / 100))
 
     must_kw = watch.get("must_keywords") or ""
     query_parts = [watch["product_code_out"]]
@@ -69,13 +74,16 @@ def search_items(app_id, api_base, watch):
         price = item.get("premiumPrice") or item.get("price")
         if price is None:
             continue
+        point_rate = (item.get("point", {}).get("times") or CONFIG["DEFAULT_POINT_RATE"]) + CONFIG["POINT_BONUS"]
+        effective_price = round(int(price) * (1 - point_rate / 100))
         results.append({
-            "url":         item.get("url", ""),
-            "name":        item.get("name", ""),
-            "price":       int(price),
-            "image":       item.get("image", {}).get("medium", ""),
-            "condition":   item.get("condition", ""),
-            "description": (item.get("description") or "")[:1500],
+            "url":             item.get("url", ""),
+            "name":            item.get("name", ""),
+            "price":           int(price),
+            "effective_price": effective_price,
+            "image":           item.get("image", {}).get("medium", ""),
+            "condition":       item.get("condition", ""),
+            "description":     (item.get("description") or "")[:1500],
         })
 
     return results
@@ -104,7 +112,7 @@ def matches(item, watch):
         if kw in item["name"]:
             return False
 
-    return (item["price"] + CONFIG["DEFAULT_FEE"]) <= float(watch["final_price"])
+    return (item["effective_price"] + CONFIG["DEFAULT_FEE"]) <= float(watch["final_price"])
 
 
 def load_watch_list(supabase):
