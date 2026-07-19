@@ -12,7 +12,7 @@ from curl_cffi import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
-load_dotenv(Path(__file__).parents[2] / ".secrets" / "github_actions.env")
+load_dotenv(Path(__file__).parents[3] / ".secrets" / "github_actions.env")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
