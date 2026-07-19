@@ -20,7 +20,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from supabase import create_client
 
-load_dotenv(Path(__file__).parents[2] / ".secrets" / "github_actions.env")
+load_dotenv(Path(__file__).parents[3] / ".secrets" / "github_actions.env")
 
 CONFIG = {
     "DEFAULT_FEE": 770,
