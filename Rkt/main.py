@@ -11,7 +11,7 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
-load_dotenv(Path(__file__).parents[2] / ".secrets" / "github_actions.env")
+load_dotenv(Path(__file__).parents[3] / ".secrets" / "github_actions.env")
 
 CONFIG = {
     "DEFAULT_FEE": 0,
@@ -20,6 +20,8 @@ CONFIG = {
     "SLEEP_MAX": 5.0,
     "FLUSH_INTERVAL": 90,
     "PRICE_FROM_RATIO": 0.7,
+    "DEFAULT_POINT_RATE": 1,
+    "MAX_POINT_RATE_MARGIN": 20,
     "API_HEADERS": {
         "Origin": os.getenv("RKT_ORIGIN", ""),
         "Referer": os.getenv("RKT_ORIGIN", ""),
@@ -38,9 +40,24 @@ def random_sleep(min_sec, max_sec):
     time.sleep(random.uniform(min_sec, max_sec))
 
 
-def search_items(app_id, access_key, api_base, watch):
+def campaign_point_bonus(day):
+    bonus = 4  # デフォルト常時加算
+    if day == 1:
+        bonus += 2
+    if day == 18:
+        bonus += 3
+    if day in (5, 10, 15, 20, 25, 30):
+        bonus += 1
+    if 4 <= day <= 10 or 19 <= day <= 25:
+        bonus += 5
+    return bonus
+
+
+def search_items(app_id, access_key, api_base, watch, campaign_bonus):
     final_price = float(watch["final_price"])
     price_from = int(final_price * CONFIG["PRICE_FROM_RATIO"])
+    # ポイント還元分（ショップ独自倍率＋キャンペーン加算）を考慮し、表示価格の上限は実質価格の上限より広めに取る
+    price_to = int(final_price / (1 - (CONFIG["MAX_POINT_RATE_MARGIN"] + campaign_bonus) / 100))
 
     must_kw = watch.get("must_keywords") or ""
     query_parts = [watch["product_code_out"]]
@@ -53,7 +70,7 @@ def search_items(app_id, access_key, api_base, watch):
         "accessKey": access_key,
         "keyword": f'"{query}"',
         "minPrice": price_from,
-        "maxPrice": int(final_price),
+        "maxPrice": price_to,
         "hits": CONFIG["RESULTS_PER_QUERY"],
         "sort": "+itemPrice",
         "availability": 1,
@@ -88,14 +105,17 @@ def search_items(app_id, access_key, api_base, watch):
         price = item.get("itemPrice")
         if price is None:
             continue
+        point_rate = (item.get("pointRate") or CONFIG["DEFAULT_POINT_RATE"]) + campaign_bonus
+        effective_price = round(int(price) * (1 - point_rate / 100))
         image_urls = item.get("mediumImageUrls", [])
         image = image_urls[0]["imageUrl"] if image_urls and "imageUrl" in image_urls[0] else ""
         results.append({
-            "url":     item.get("itemUrl", ""),
-            "name":    item.get("itemName", ""),
-            "price":   int(price),
-            "image":   image,
-            "caption": (item.get("itemCaption") or "")[:1500],
+            "url":             item.get("itemUrl", ""),
+            "name":            item.get("itemName", ""),
+            "price":           int(price),
+            "effective_price": effective_price,
+            "image":           image,
+            "caption":         (item.get("itemCaption") or "")[:1500],
         })
 
     return results
@@ -124,7 +144,7 @@ def matches(item, watch):
         if kw in item["name"]:
             return False
 
-    return (item["price"] + CONFIG["DEFAULT_FEE"]) <= float(watch["final_price"])
+    return (item["effective_price"] + CONFIG["DEFAULT_FEE"]) <= float(watch["final_price"])
 
 
 def load_watch_list(supabase):
@@ -189,13 +209,14 @@ def _run(supabase, now_jst):
         }
 
     today = now_jst.strftime("%Y-%m-%d")
+    campaign_bonus = campaign_point_bonus(now_jst.day)
     hits = []
     pushed = set()
     total_searched = 0
 
     try:
         for i, watch in enumerate(watch_list):
-            results = search_items(app_id, access_key, api_base, watch)
+            results = search_items(app_id, access_key, api_base, watch, campaign_bonus)
             total_searched += 1
 
             for item in results:
