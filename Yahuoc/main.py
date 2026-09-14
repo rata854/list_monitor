@@ -101,8 +101,10 @@ def fetch_products(driver, url):
         except Exception:
             pass
         source = driver.page_source
+        redirected = driver.current_url != url
 
         if is_skip_page(source):
+            print(f"[DEBUG] 0件(skip_page): html_len={len(source)} redirected={redirected}", flush=True)
             return []
 
         products = []
@@ -149,6 +151,10 @@ def fetch_products(driver, url):
                 "seller_rating": rating,
                 "end_time": end_time,
             })
+
+        if not products:
+            id_matches = len(re.findall(CONFIG["PRODUCT_ID"], source))
+            print(f"[DEBUG] 0件: html_len={len(source)} id_matches={id_matches} redirected={redirected}", flush=True)
 
         return products
     except Exception as e:
