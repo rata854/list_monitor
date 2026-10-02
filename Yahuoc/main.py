@@ -5,6 +5,7 @@ import sys
 import random
 import time
 import traceback
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -38,6 +39,8 @@ CONFIG = {
     "PRODUCT_POSTAGE": r'class="[^"]*Product__postage[^"]*"[^>]*>(.*?)</p>',
     "PRODUCT_RATING":  r'class="[^"]*Product__ratingValue[^"]*"[^>]*>([^<]+)',
     "PRODUCT_END_TIME": r'（(\d{2}/\d{2} \d{2}:\d{2})終了）',
+    # 取得失敗時にページ種別を推測するための語（ブロック/認証画面など）
+    "BLOCK_HINTS": ["認証", "アクセスが集中", "ロボット", "captcha", "Access Denied", "403", "ログイン"],
 }
 
 
@@ -92,20 +95,37 @@ def parse_postage(text):
 
 
 def fetch_products(driver, url):
+    """(products, reason) を返す。
+
+    reason:
+      ok            商品を1件以上取得
+      skip_ptn1     「該当なし」ページ（SKIP_PATTERN1）
+      skip_ptn2     「該当なし」ページ（SKIP_PATTERN2）
+      blocked       待機タイムアウト＋ブロック/認証系の語を検出
+      timeout_other 待機タイムアウト、商品も該当なし表示もない（不明なページ）
+      parse_fail    商品IDはあるが必須項目の抽出に失敗（セレクタ不一致）
+      no_cards      待機は成功したが商品IDが無い
+      error         例外発生
+    """
     try:
         driver.get(url)
+        wait_ok = True
         try:
             WebDriverWait(driver, CONFIG["PAGE_LOAD_TIMEOUT"]).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, CONFIG["PRODUCT_WAIT"]))
             )
         except Exception:
-            pass
+            wait_ok = False
         source = driver.page_source
         redirected = driver.current_url != url
+        stats = f"wait_ok={wait_ok} html_len={len(source)} redirected={redirected}"
 
-        if is_skip_page(source):
-            print(f"[DEBUG] 0件(skip_page): html_len={len(source)} redirected={redirected}", flush=True)
-            return []
+        if CONFIG["SKIP_PATTERN1"] in source:
+            print(f"[DEBUG] reason=skip_ptn1 {stats}", flush=True)
+            return [], "skip_ptn1"
+        if CONFIG["SKIP_PATTERN2"] in source:
+            print(f"[DEBUG] reason=skip_ptn2 {stats}", flush=True)
+            return [], "skip_ptn2"
 
         products = []
         seen_ids = set()
@@ -152,14 +172,27 @@ def fetch_products(driver, url):
                 "end_time": end_time,
             })
 
-        if not products:
-            id_matches = len(re.findall(CONFIG["PRODUCT_ID"], source))
-            print(f"[DEBUG] 0件: html_len={len(source)} id_matches={id_matches} redirected={redirected}", flush=True)
+        if products:
+            return products, "ok"
 
-        return products
+        id_matches = len(re.findall(CONFIG["PRODUCT_ID"], source))
+        li_count = len(re.findall(CONFIG["PRODUCT_CARD"], source))
+        hints = [h for h in CONFIG["BLOCK_HINTS"] if h.lower() in source.lower()]
+        if not wait_ok and id_matches == 0:
+            reason = "blocked" if hints else "timeout_other"
+        elif id_matches > 0:
+            reason = "parse_fail"
+        else:
+            reason = "no_cards"
+        print(
+            f"[DEBUG] reason={reason} {stats} id_matches={id_matches} "
+            f"li_cards={li_count} block_hints={len(hints)}",
+            flush=True,
+        )
+        return [], reason
     except Exception as e:
-        print(f"[WARN] 商品取得エラー: {e}", flush=True)
-        return []
+        print(f"[WARN] 商品取得エラー: {type(e).__name__}: {e}", flush=True)
+        return [], "error"
 
 
 def matches(product, watch):
@@ -243,14 +276,16 @@ def _run(supabase, now_jst):
         today = now_jst.strftime("%Y-%m-%d")
         hits = []
         pushed = set()
+        reasons = Counter()
 
         for i, watch in enumerate(watch_list):
             search_url = watch.get("yahuoc_all_url")
             if not search_url:
                 continue
 
-            products = fetch_products(driver, search_url)
-            print(f"検索 {i + 1}/{len(watch_list)}: {len(products)}件取得", flush=True)
+            products, reason = fetch_products(driver, search_url)
+            reasons[reason] += 1
+            print(f"検索 {i + 1}/{len(watch_list)}: {len(products)}件取得 ({reason})", flush=True)
 
             for product in products:
                 if not matches(product, watch):
@@ -278,6 +313,8 @@ def _run(supabase, now_jst):
     finally:
         driver.quit()
 
+    print(f"取得結果内訳: {dict(reasons)}", flush=True)
+
     if not hits:
         print("条件に合う商品はありませんでした", flush=True)
         return {
@@ -287,6 +324,7 @@ def _run(supabase, now_jst):
             "debug_info": {
                 "watch_list_count": len(watch_list),
                 "hits_count": 0,
+                "fetch_reasons": dict(reasons),
             },
         }
 
@@ -299,6 +337,7 @@ def _run(supabase, now_jst):
             "debug_info": {
                 "watch_list_count": len(watch_list),
                 "hits_count": inserted,
+                "fetch_reasons": dict(reasons),
             },
         }
     except Exception as e:
