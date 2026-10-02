@@ -14,7 +14,6 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv
@@ -29,7 +28,7 @@ CONFIG = {
     "SLEEP_MAX": 12.0,
     "SKIP_PATTERN1": "に一致する商品はありません",
     "SKIP_PATTERN2": "条件に一致する商品は見つかりませんでした",
-    "PRODUCT_WAIT":    "li.Product",
+    "PRODUCT_WAIT":    "li.Product, a[data-cl-params*='_cl_link:tc']",
     "PRODUCT_CARD":    r'(?=<li[^>]+class="Product[ ">])',
     "PRODUCT_ID":      r'data-auction-id="([^"]+)"',
     "PRODUCT_URL":     r'<a[^>]+class="[^"]*Product__imageLink[^"]*"[^>]+href="([^"]+)"',
@@ -38,9 +37,14 @@ CONFIG = {
     "PRODUCT_PRICE":   r'class="[^"]*Product__priceValue[^"]*u-textRed[^"]*"[^>]*>([\d,]+)',
     "PRODUCT_POSTAGE": r'class="[^"]*Product__postage[^"]*"[^>]*>(.*?)</p>',
     "PRODUCT_RATING":  r'class="[^"]*Product__ratingValue[^"]*"[^>]*>([^<]+)',
-    "PRODUCT_END_TIME": r'（(\d{2}/\d{2} \d{2}:\d{2})終了）',
-    # 取得失敗時にページ種別を推測するための語（ブロック/認証画面など）
-    "BLOCK_HINTS": ["認証", "アクセスが集中", "ロボット", "captcha", "Access Denied", "403", "ログイン"],
+    "PRODUCT_END_TIME": r'（(\d{1,2}/\d{1,2} \d{1,2}:\d{2})終了',
+    # 新レイアウト（クラス名がハッシュ化されているため属性・文言で抽出する）
+    "V2_TITLE_LINK":   r'<a[^>]+href="([^"]+)"[^>]+_cl_link:tc[^>]*?title="([^"]*)"',
+    "V2_PRICE":        r'現在</span><span[^>]*>([\d,]+)',
+    "V2_POSTAGE":      r'</span></span></div><p[^>]*>(.*?)</p>',
+    "V2_RATING":       r'>(\d+(?:\.\d+)?)%</span>',
+    # 取得失敗時にページ種別を推測するための語（認証/アクセス制限画面など）
+    "BLOCK_HINTS": ["認証", "アクセスが集中", "ロボット", "captcha", "Access Denied"],
 }
 
 
@@ -53,7 +57,7 @@ def parse_end_time(text):
         end_month = int(month)
         end_day = int(day)
         year = now.year + (1 if end_month < now.month or (end_month == now.month and end_day < now.day - 7) else 0)
-        return f"{year}-{month}-{day} {time_part}"
+        return f"{year}-{end_month:02d}-{end_day:02d} {time_part.zfill(5)}"
     except Exception:
         return ""
 
@@ -94,6 +98,47 @@ def parse_postage(text):
     return None
 
 
+def parse_products_v2(source):
+    """新レイアウト用。タイトルリンクを起点に、次のタイトルリンクまでを1商品として抽出する。"""
+    links = list(re.finditer(CONFIG["V2_TITLE_LINK"], source))
+    products = []
+    seen_ids = set()
+    for idx, m in enumerate(links):
+        end = links[idx + 1].start() if idx + 1 < len(links) else len(source)
+        card = source[m.end():end]
+        href = html.unescape(m.group(1))
+        product_id = href.rstrip("/").rsplit("/", 1)[-1]
+        if product_id in seen_ids:
+            continue
+        seen_ids.add(product_id)
+
+        price_m = re.search(CONFIG["V2_PRICE"], card)
+        if not price_m:
+            continue
+        try:
+            price = int(price_m.group(1).replace(",", ""))
+        except ValueError:
+            continue
+
+        title_raw = m.group(2)
+        img_m = re.search(r'<img[^>]*?src="([^"]+)"[^>]*?alt="' + re.escape(title_raw) + '"', source)
+        postage_m = re.search(CONFIG["V2_POSTAGE"], card, re.DOTALL)
+        rating_m = re.search(CONFIG["V2_RATING"], card)
+        end_time_m = re.search(CONFIG["PRODUCT_END_TIME"], card)
+
+        products.append({
+            "id": product_id,
+            "url": href,
+            "title": html.unescape(title_raw),
+            "image": html.unescape(img_m.group(1)) if img_m else "",
+            "price": price,
+            "fee": parse_postage(postage_m.group(1)) if postage_m else None,
+            "seller_rating": rating_m.group(1) if rating_m else "",
+            "end_time": parse_end_time(end_time_m.group(1)) if end_time_m else "",
+        })
+    return products
+
+
 def fetch_products(driver, url):
     """(products, reason) を返す。
 
@@ -112,20 +157,14 @@ def fetch_products(driver, url):
         wait_ok = True
         try:
             WebDriverWait(driver, CONFIG["PAGE_LOAD_TIMEOUT"]).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, CONFIG["PRODUCT_WAIT"]))
+                lambda d: d.find_elements(By.CSS_SELECTOR, CONFIG["PRODUCT_WAIT"])
+                or is_skip_page(d.page_source)
             )
         except Exception:
             wait_ok = False
         source = driver.page_source
         redirected = driver.current_url != url
         stats = f"wait_ok={wait_ok} html_len={len(source)} redirected={redirected}"
-
-        if CONFIG["SKIP_PATTERN1"] in source:
-            print(f"[DEBUG] reason=skip_ptn1 {stats}", flush=True)
-            return [], "skip_ptn1"
-        if CONFIG["SKIP_PATTERN2"] in source:
-            print(f"[DEBUG] reason=skip_ptn2 {stats}", flush=True)
-            return [], "skip_ptn2"
 
         products = []
         seen_ids = set()
@@ -172,8 +211,18 @@ def fetch_products(driver, url):
                 "end_time": end_time,
             })
 
+        if not products:
+            products = parse_products_v2(source)
         if products:
             return products, "ok"
+
+        if CONFIG["SKIP_PATTERN1"] in source:
+            print(f"[DEBUG] reason=skip_ptn1 {stats}", flush=True)
+            return [], "skip_ptn1"
+        if CONFIG["SKIP_PATTERN2"] in source:
+            print(f"[DEBUG] reason=skip_ptn2 {stats}", flush=True)
+            return [], "skip_ptn2"
+
 
         id_matches = len(re.findall(CONFIG["PRODUCT_ID"], source))
         li_count = len(re.findall(CONFIG["PRODUCT_CARD"], source))
