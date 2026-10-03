@@ -162,9 +162,18 @@ def fetch_products(driver, url):
             )
         except Exception:
             wait_ok = False
+        if not wait_ok:
+            time.sleep(3)
         source = driver.page_source
         redirected = driver.current_url != url
         stats = f"wait_ok={wait_ok} html_len={len(source)} redirected={redirected}"
+
+        if CONFIG["SKIP_PATTERN1"] in source:
+            print(f"[DEBUG] reason=skip_ptn1 {stats}", flush=True)
+            return [], "skip_ptn1"
+        if CONFIG["SKIP_PATTERN2"] in source:
+            print(f"[DEBUG] reason=skip_ptn2 {stats}", flush=True)
+            return [], "skip_ptn2"
 
         products = []
         seen_ids = set()
@@ -215,14 +224,6 @@ def fetch_products(driver, url):
             products = parse_products_v2(source)
         if products:
             return products, "ok"
-
-        if CONFIG["SKIP_PATTERN1"] in source:
-            print(f"[DEBUG] reason=skip_ptn1 {stats}", flush=True)
-            return [], "skip_ptn1"
-        if CONFIG["SKIP_PATTERN2"] in source:
-            print(f"[DEBUG] reason=skip_ptn2 {stats}", flush=True)
-            return [], "skip_ptn2"
-
 
         id_matches = len(re.findall(CONFIG["PRODUCT_ID"], source))
         li_count = len(re.findall(CONFIG["PRODUCT_CARD"], source))
