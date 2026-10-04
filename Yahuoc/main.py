@@ -4,7 +4,9 @@ import re
 import sys
 import random
 import time
+import json
 import traceback
+import urllib.request
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -48,6 +50,26 @@ CONFIG = {
     # 取得失敗時にページ種別を推測するための語（認証/アクセス制限画面など）
     "BLOCK_HINTS": ["認証", "アクセスが集中", "ロボット", "captcha", "Access Denied"],
 }
+
+
+def send_failure_mail(subject, body):
+    """失敗通知メールを送る。送信できなくても本処理は止めない。"""
+    key = os.environ.get("RESEND_API_KEY", "")
+    to = os.environ.get("NOTIFY_TO", "")
+    frm = os.environ.get("NOTIFY_FROM", "")
+    if not (key and to and frm):
+        print("[WARN] 通知用の環境変数が未設定のためメール送信をスキップ", flush=True)
+        return
+    try:
+        req = urllib.request.Request(
+            os.environ.get("NOTIFY_API_URL", "https://api.resend.com/emails"),
+            data=json.dumps({"from": frm, "to": [to], "subject": subject, "text": body}).encode("utf-8"),
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=20) as res:
+            print(f"失敗通知メールを送信しました (status={res.status})", flush=True)
+    except Exception as e:
+        print(f"[WARN] 失敗通知メールの送信に失敗（無視）: {type(e).__name__}", flush=True)
 
 
 def parse_end_time(text):
@@ -488,6 +510,21 @@ def main():
             "stack_trace": traceback.format_exc(),
             "debug_info": {},
         }
+
+    if result["status"] == "failure":
+        info = result.get("debug_info") or {}
+        send_failure_mail(
+            f"[list_monitor] {TASK_NAME} 失敗: {result.get('error_type') or 'Error'}",
+            "\n".join([
+                f"task: {TASK_NAME}",
+                f"time(JST): {now_jst.strftime('%Y-%m-%d %H:%M')}",
+                f"error_type: {result.get('error_type')}",
+                f"error_message: {result.get('error_message')}",
+                f"hits_written: {info.get('hits_count')}",
+                f"fetch_reasons: {info.get('fetch_reasons')}",
+                "再実行: GitHub Actions から手動実行（完了済みの日は --force が必要）",
+            ]),
+        )
 
     log_execution(
         supabase,
