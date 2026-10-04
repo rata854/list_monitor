@@ -28,6 +28,8 @@ CONFIG = {
     "SLEEP_MAX": 12.0,
     "SKIP_PATTERN1": "に一致する商品はありません",
     "SKIP_PATTERN2": "条件に一致する商品は見つかりませんでした",
+    # 想定内の取得結果。これ以外のページが返ったら巡回を中断する
+    "EXPECTED_REASONS": ("ok", "skip_ptn1", "skip_ptn2"),
     "PRODUCT_WAIT":    "li.Product, a[data-cl-params*='_cl_link:tc']",
     "PRODUCT_CARD":    r'(?=<li[^>]+class="Product[ ">])',
     "PRODUCT_ID":      r'data-auction-id="([^"]+)"',
@@ -309,6 +311,29 @@ def log_execution(supabase_client, *, task_name, status, started_at,
         print(f"[WARN] ログ書き込み失敗（無視）: {e}", flush=True)
 
 
+TASK_NAME = "scrape_yahuoc"
+
+
+def already_completed_today(supabase, now_jst):
+    """今日(JST)すでに全件巡回が完了していれば True。確認に失敗した場合は実行側に倒す。"""
+    try:
+        day_start = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
+        resp = (
+            supabase.table("execution_logs")
+            .select("id")
+            .eq("task_name", TASK_NAME)
+            .in_("status", ["success", "skipped"])
+            .eq("debug_info->>completed", "true")
+            .gte("started_at", day_start.isoformat())
+            .limit(1)
+            .execute()
+        )
+        return bool(resp.data)
+    except Exception as e:
+        print(f"[WARN] 完了フラグ確認失敗（実行を続行）: {e}", flush=True)
+        return False
+
+
 def _run(supabase, now_jst):
     watch_list = load_watch_list(supabase)
     print(f"監視リスト件数: {len(watch_list)}", flush=True)
@@ -327,6 +352,7 @@ def _run(supabase, now_jst):
         hits = []
         pushed = set()
         reasons = Counter()
+        aborted = None
 
         for i, watch in enumerate(watch_list):
             search_url = watch.get("yahuoc_all_url")
@@ -336,6 +362,11 @@ def _run(supabase, now_jst):
             products, reason = fetch_products(driver, search_url)
             reasons[reason] += 1
             print(f"検索 {i + 1}/{len(watch_list)}: {len(products)}件取得 ({reason})", flush=True)
+
+            if reason not in CONFIG["EXPECTED_REASONS"]:
+                aborted = {"index": i + 1, "reason": reason}
+                print(f"[ERROR] 想定外のページのため中断: 検索 {i + 1}/{len(watch_list)} reason={reason}", flush=True)
+                break
 
             for product in products:
                 if not matches(product, watch):
@@ -365,44 +396,57 @@ def _run(supabase, now_jst):
 
     print(f"取得結果内訳: {dict(reasons)}", flush=True)
 
-    if not hits:
-        print("条件に合う商品はありませんでした", flush=True)
-        return {
-            "status": "skipped",
-            "exit_code": 0,
-            "severity": "info",
-            "debug_info": {
-                "watch_list_count": len(watch_list),
-                "hits_count": 0,
-                "fetch_reasons": dict(reasons),
-            },
-        }
+    debug_info = {
+        "watch_list_count": len(watch_list),
+        "hits_count": 0,
+        "fetch_reasons": dict(reasons),
+        "completed": False,
+    }
+    if aborted:
+        debug_info["aborted_at"] = aborted["index"]
+        debug_info["aborted_reason"] = aborted["reason"]
 
-    try:
-        inserted = insert_hits(supabase, hits)
-        print(f"scrape_hits に {inserted} 件書き込みました（重複は除外）", flush=True)
-        return {
-            "status": "success",
-            "exit_code": 0,
-            "debug_info": {
-                "watch_list_count": len(watch_list),
-                "hits_count": inserted,
-                "fetch_reasons": dict(reasons),
-            },
-        }
-    except Exception as e:
-        print(f"[ERROR] Supabase書き込み失敗: {e}", flush=True)
+    insert_error = None
+    if hits:
+        try:
+            inserted = insert_hits(supabase, hits)
+            debug_info["hits_count"] = inserted
+            print(f"scrape_hits に {inserted} 件書き込みました（重複は除外）", flush=True)
+        except Exception as e:
+            insert_error = e
+            debug_info["hits_count"] = len(hits)
+            print(f"[ERROR] Supabase書き込み失敗: {e}", flush=True)
+            err_trace = traceback.format_exc()
+    else:
+        print("条件に合う商品はありませんでした", flush=True)
+
+    if insert_error:
         return {
             "status": "failure",
             "exit_code": 1,
-            "error_type": type(e).__name__,
-            "error_message": str(e),
-            "stack_trace": traceback.format_exc(),
-            "debug_info": {
-                "watch_list_count": len(watch_list),
-                "hits_count": len(hits),
-            },
+            "error_type": type(insert_error).__name__,
+            "error_message": str(insert_error),
+            "stack_trace": err_trace,
+            "debug_info": debug_info,
         }
+    if aborted:
+        return {
+            "status": "failure",
+            "exit_code": 1,
+            "error_type": "UnexpectedPage",
+            "error_message": (
+                f"想定外のページを検出して中断: 検索 {aborted['index']}/{len(watch_list)} "
+                f"reason={aborted['reason']}（中断前のHIT {debug_info['hits_count']}件は書き込み済み）"
+            ),
+            "debug_info": debug_info,
+        }
+    debug_info["completed"] = True
+    return {
+        "status": "success" if hits else "skipped",
+        "exit_code": 0,
+        "severity": None if hits else "info",
+        "debug_info": debug_info,
+    }
 
 
 def main():
@@ -426,6 +470,10 @@ def main():
     if dry_run:
         watch_list = load_watch_list(supabase)
         print(f"[DRY RUN] 監視リスト件数: {len(watch_list)}", flush=True)
+        sys.exit(0)
+
+    if "--force" not in sys.argv and already_completed_today(supabase, now_jst):
+        print("本日分は完了済みのため終了します（再実行する場合は --force）", flush=True)
         sys.exit(0)
 
     try:
