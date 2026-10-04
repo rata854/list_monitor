@@ -6,6 +6,7 @@ import random
 import time
 import json
 import traceback
+import urllib.error
 import urllib.request
 from collections import Counter
 from datetime import datetime
@@ -64,10 +65,17 @@ def send_failure_mail(subject, body):
         req = urllib.request.Request(
             os.environ.get("NOTIFY_API_URL", "https://api.resend.com/emails"),
             data=json.dumps({"from": frm, "to": [to], "subject": subject, "text": body}).encode("utf-8"),
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "User-Agent": "list-monitor/1.0",
+            },
         )
         with urllib.request.urlopen(req, timeout=20) as res:
             print(f"失敗通知メールを送信しました (status={res.status})", flush=True)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:200]
+        print(f"[WARN] 失敗通知メールの送信に失敗（無視）: HTTP {e.code} {detail}", flush=True)
     except Exception as e:
         print(f"[WARN] 失敗通知メールの送信に失敗（無視）: {type(e).__name__}", flush=True)
 
@@ -105,8 +113,18 @@ def make_driver(headless=True):
     return webdriver.Chrome(service=service, options=options)
 
 
-def is_skip_page(html):
-    return CONFIG["SKIP_PATTERN1"] in html or CONFIG["SKIP_PATTERN2"] in html
+def skip_reason(source):
+    """該当なし系の表示なら reason を返す。文言が<br>等で分断されても拾えるようタグを除いて判定する。"""
+    text = re.sub(r"<[^>]+>", "", source)
+    if CONFIG["SKIP_PATTERN1"] in text:
+        return "skip_ptn1"
+    if CONFIG["SKIP_PATTERN2"] in text:
+        return "skip_ptn2"
+    return None
+
+
+def is_skip_page(source):
+    return skip_reason(source) is not None
 
 
 def parse_postage(text):
@@ -192,12 +210,10 @@ def fetch_products(driver, url):
         redirected = driver.current_url != url
         stats = f"wait_ok={wait_ok} html_len={len(source)} redirected={redirected}"
 
-        if CONFIG["SKIP_PATTERN1"] in source:
-            print(f"[DEBUG] reason=skip_ptn1 {stats}", flush=True)
-            return [], "skip_ptn1"
-        if CONFIG["SKIP_PATTERN2"] in source:
-            print(f"[DEBUG] reason=skip_ptn2 {stats}", flush=True)
-            return [], "skip_ptn2"
+        skip = skip_reason(source)
+        if skip:
+            print(f"[DEBUG] reason={skip} {stats}", flush=True)
+            return [], skip
 
         products = []
         seen_ids = set()
