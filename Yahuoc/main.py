@@ -356,9 +356,12 @@ def already_completed_today(supabase, now_jst):
         return False
 
 
-def _run(supabase, now_jst):
+def _run(supabase, now_jst, limit=None):
     watch_list = load_watch_list(supabase)
     print(f"監視リスト件数: {len(watch_list)}", flush=True)
+    if limit is not None:
+        watch_list = watch_list[:limit]
+        print(f"[PARTIAL] 先頭 {len(watch_list)} 件のみ巡回します（完了フラグは立てません）", flush=True)
     if not watch_list:
         print("有効な監視対象がありません", flush=True)
         return {
@@ -462,7 +465,7 @@ def _run(supabase, now_jst):
             ),
             "debug_info": debug_info,
         }
-    debug_info["completed"] = True
+    debug_info["completed"] = limit is None
     return {
         "status": "success" if hits else "skipped",
         "exit_code": 0,
@@ -494,12 +497,22 @@ def main():
         print(f"[DRY RUN] 監視リスト件数: {len(watch_list)}", flush=True)
         sys.exit(0)
 
-    if "--force" not in sys.argv and already_completed_today(supabase, now_jst):
+    limit = None
+    if "--limit" in sys.argv:
+        try:
+            limit = int(sys.argv[sys.argv.index("--limit") + 1])
+            if limit < 1:
+                raise ValueError
+        except (IndexError, ValueError):
+            print("[ERROR] --limit には1以上の整数を指定してください", flush=True)
+            sys.exit(1)
+
+    if limit is None and "--force" not in sys.argv and already_completed_today(supabase, now_jst):
         print("本日分は完了済みのため終了します（再実行する場合は --force）", flush=True)
         sys.exit(0)
 
     try:
-        result = _run(supabase, now_jst)
+        result = _run(supabase, now_jst, limit)
     except Exception as e:
         print(f"[ERROR] 予期しないエラー: {e}", flush=True)
         result = {

@@ -2,6 +2,11 @@ name: Resale Monitor Yahuoc
 
 on:
   workflow_dispatch:
+    inputs:
+      limit:
+        description: "先頭からN件だけ巡回（空なら全件）"
+        required: false
+        default: ""
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -30,4 +35,10 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
           NOTIFY_FROM: ${{ secrets.NOTIFY_FROM }}
-        run: uv run python main.py
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          if [ -n "$LIMIT" ]; then
+            uv run python main.py --limit "$LIMIT"
+          else
+            uv run python main.py
+          fi
