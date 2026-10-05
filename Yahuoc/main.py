@@ -4,6 +4,7 @@ import re
 import sys
 import random
 import time
+import base64
 import json
 import traceback
 import urllib.error
@@ -53,7 +54,7 @@ CONFIG = {
 }
 
 
-def send_failure_mail(subject, body):
+def send_failure_mail(subject, body, attachments=None):
     """失敗通知メールを送る。送信できなくても本処理は止めない。"""
     key = os.environ.get("RESEND_API_KEY", "")
     to = os.environ.get("NOTIFY_TO", "")
@@ -64,7 +65,13 @@ def send_failure_mail(subject, body):
     try:
         req = urllib.request.Request(
             os.environ.get("NOTIFY_API_URL", "https://api.resend.com/emails"),
-            data=json.dumps({"from": frm, "to": [to], "subject": subject, "text": body}).encode("utf-8"),
+            data=json.dumps({
+                "from": frm, "to": [to], "subject": subject, "text": body,
+                "attachments": [
+                    {"filename": name, "content": base64.b64encode(data).decode("ascii")}
+                    for name, data in (attachments or [])
+                ],
+            }).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
@@ -352,6 +359,20 @@ def log_execution(supabase_client, *, task_name, status, started_at,
 TASK_NAME = "scrape_yahuoc"
 
 
+def capture_page(driver):
+    """中断時の調査用に、表示中ページのスクリーンショットとHTMLを取得する。"""
+    files = []
+    try:
+        files.append(("screenshot.png", driver.get_screenshot_as_png()))
+    except Exception as e:
+        print(f"[WARN] スクリーンショット取得失敗: {type(e).__name__}", flush=True)
+    try:
+        files.append(("page.html", driver.page_source.encode("utf-8")))
+    except Exception as e:
+        print(f"[WARN] HTML取得失敗: {type(e).__name__}", flush=True)
+    return files
+
+
 def already_completed_today(supabase, now_jst):
     """今日(JST)すでに全件巡回が完了していれば True。確認に失敗した場合は実行側に倒す。"""
     try:
@@ -401,11 +422,15 @@ def _run(supabase, now_jst, limit=None):
                 continue
 
             products, reason = fetch_products(driver, search_url)
+            if reason not in CONFIG["EXPECTED_REASONS"]:
+                print(f"[RETRY] 検索 {i + 1}/{len(watch_list)} reason={reason}: 5秒後に1回だけ再取得します", flush=True)
+                time.sleep(5)
+                products, reason = fetch_products(driver, search_url)
             reasons[reason] += 1
             print(f"検索 {i + 1}/{len(watch_list)}: {len(products)}件取得 ({reason})", flush=True)
 
             if reason not in CONFIG["EXPECTED_REASONS"]:
-                aborted = {"index": i + 1, "reason": reason}
+                aborted = {"index": i + 1, "reason": reason, "attachments": capture_page(driver)}
                 print(f"[ERROR] 想定外のページのため中断: 検索 {i + 1}/{len(watch_list)} reason={reason}", flush=True)
                 break
 
@@ -475,6 +500,7 @@ def _run(supabase, now_jst, limit=None):
             "status": "failure",
             "exit_code": 1,
             "error_type": "UnexpectedPage",
+            "attachments": aborted["attachments"],
             "error_message": (
                 f"想定外のページを検出して中断: 検索 {aborted['index']}/{len(watch_list)} "
                 f"reason={aborted['reason']}（中断前のHIT {debug_info['hits_count']}件は書き込み済み）"
@@ -552,7 +578,9 @@ def main():
                 f"hits_written: {info.get('hits_count')}",
                 f"fetch_reasons: {info.get('fetch_reasons')}",
                 "再実行: GitHub Actions から手動実行（完了済みの日は --force が必要）",
+                "添付: 中断時の画面(screenshot.png)とHTML(page.html)" if result.get("attachments") else "",
             ]),
+            result.get("attachments"),
         )
 
     log_execution(
