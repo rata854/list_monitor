@@ -4,11 +4,7 @@ import re
 import sys
 import random
 import time
-import base64
-import json
 import traceback
-import urllib.error
-import urllib.request
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -52,39 +48,6 @@ CONFIG = {
     # 取得失敗時にページ種別を推測するための語（認証/アクセス制限画面など）
     "BLOCK_HINTS": ["認証", "アクセスが集中", "ロボット", "captcha", "Access Denied"],
 }
-
-
-def send_failure_mail(subject, body, attachments=None):
-    """失敗通知メールを送る。送信できなくても本処理は止めない。"""
-    key = os.environ.get("RESEND_API_KEY", "")
-    to = os.environ.get("NOTIFY_TO", "")
-    frm = os.environ.get("NOTIFY_FROM", "")
-    if not (key and to and frm):
-        print("[WARN] 通知用の環境変数が未設定のためメール送信をスキップ", flush=True)
-        return
-    try:
-        req = urllib.request.Request(
-            os.environ.get("NOTIFY_API_URL", "https://api.resend.com/emails"),
-            data=json.dumps({
-                "from": frm, "to": [to], "subject": subject, "text": body,
-                "attachments": [
-                    {"filename": name, "content": base64.b64encode(data).decode("ascii")}
-                    for name, data in (attachments or [])
-                ],
-            }).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-                "User-Agent": "list-monitor/1.0",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=20) as res:
-            print(f"失敗通知メールを送信しました (status={res.status})", flush=True)
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:200]
-        print(f"[WARN] 失敗通知メールの送信に失敗（無視）: HTTP {e.code} {detail}", flush=True)
-    except Exception as e:
-        print(f"[WARN] 失敗通知メールの送信に失敗（無視）: {type(e).__name__}", flush=True)
 
 
 def parse_end_time(text):
@@ -359,20 +322,6 @@ def log_execution(supabase_client, *, task_name, status, started_at,
 TASK_NAME = "scrape_yahuoc"
 
 
-def capture_page(driver):
-    """中断時の調査用に、表示中ページのスクリーンショットとHTMLを取得する。"""
-    files = []
-    try:
-        files.append(("screenshot.png", driver.get_screenshot_as_png()))
-    except Exception as e:
-        print(f"[WARN] スクリーンショット取得失敗: {type(e).__name__}", flush=True)
-    try:
-        files.append(("page.html", driver.page_source.encode("utf-8")))
-    except Exception as e:
-        print(f"[WARN] HTML取得失敗: {type(e).__name__}", flush=True)
-    return files
-
-
 def already_completed_today(supabase, now_jst):
     """今日(JST)すでに全件巡回が完了していれば True。確認に失敗した場合は実行側に倒す。"""
     try:
@@ -430,7 +379,7 @@ def _run(supabase, now_jst, limit=None):
             print(f"検索 {i + 1}/{len(watch_list)}: {len(products)}件取得 ({reason})", flush=True)
 
             if reason not in CONFIG["EXPECTED_REASONS"]:
-                aborted = {"index": i + 1, "reason": reason, "attachments": capture_page(driver)}
+                aborted = {"index": i + 1, "reason": reason}
                 print(f"[ERROR] 想定外のページのため中断: 検索 {i + 1}/{len(watch_list)} reason={reason}", flush=True)
                 break
 
@@ -500,7 +449,6 @@ def _run(supabase, now_jst, limit=None):
             "status": "failure",
             "exit_code": 1,
             "error_type": "UnexpectedPage",
-            "attachments": aborted["attachments"],
             "error_message": (
                 f"想定外のページを検出して中断: 検索 {aborted['index']}/{len(watch_list)} "
                 f"reason={aborted['reason']}（中断前のHIT {debug_info['hits_count']}件は書き込み済み）"
@@ -565,23 +513,6 @@ def main():
             "stack_trace": traceback.format_exc(),
             "debug_info": {},
         }
-
-    if result["status"] == "failure":
-        info = result.get("debug_info") or {}
-        send_failure_mail(
-            f"[list_monitor] {TASK_NAME} 失敗: {result.get('error_type') or 'Error'}",
-            "\n".join([
-                f"task: {TASK_NAME}",
-                f"time(JST): {now_jst.strftime('%Y-%m-%d %H:%M')}",
-                f"error_type: {result.get('error_type')}",
-                f"error_message: {result.get('error_message')}",
-                f"hits_written: {info.get('hits_count')}",
-                f"fetch_reasons: {info.get('fetch_reasons')}",
-                "再実行: GitHub Actions から手動実行（完了済みの日は --force が必要）",
-                "添付: 中断時の画面(screenshot.png)とHTML(page.html)" if result.get("attachments") else "",
-            ]),
-            result.get("attachments"),
-        )
 
     log_execution(
         supabase,

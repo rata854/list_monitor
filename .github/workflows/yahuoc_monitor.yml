@@ -32,9 +32,6 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
-          NOTIFY_FROM: ${{ secrets.NOTIFY_FROM }}
           LIMIT: ${{ inputs.limit }}
         run: |
           if [ -n "$LIMIT" ]; then
