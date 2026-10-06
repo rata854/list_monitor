@@ -83,6 +83,14 @@ def make_driver(headless=True):
     return webdriver.Chrome(service=service, options=options)
 
 
+def page_text_head(source, n=200):
+    """想定外ページの判別用に、タグとURLを除いた本文の先頭を返す。"""
+    text = re.sub(r"(?is)<(script|style).*?</>", " ", source)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"https?://\S+", "", html.unescape(text))
+    return re.sub(r"\s+", " ", text).strip()[:n]
+
+
 def skip_reason(source):
     """該当なし系の表示なら reason を返す。文言が<br>等で分断されても拾えるようタグを除いて判定する。"""
     text = re.sub(r"<[^>]+>", "", source)
@@ -246,7 +254,7 @@ def fetch_products(driver, url):
             reason = "no_cards"
         print(
             f"[DEBUG] reason={reason} {stats} id_matches={id_matches} "
-            f"li_cards={li_count} block_hints={len(hints)}",
+            f"li_cards={li_count} block_hints={len(hints)} text={page_text_head(source)}",
             flush=True,
         )
         return [], reason
