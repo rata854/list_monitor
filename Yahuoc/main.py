@@ -85,7 +85,7 @@ def make_driver(headless=True):
 
 def page_text_head(source, n=200):
     """想定外ページの判別用に、タグとURLを除いた本文の先頭を返す。"""
-    text = re.sub(r"(?is)<(script|style).*?</>", " ", source)
+    text = re.sub(r"(?is)<(script|style).*?</\1>", " ", source)
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"https?://\S+", "", html.unescape(text))
     return re.sub(r"\s+", " ", text).strip()[:n]
