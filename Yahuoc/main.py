@@ -41,7 +41,7 @@ CONFIG = {
     "PRODUCT_RATING":  r'class="[^"]*Product__ratingValue[^"]*"[^>]*>([^<]+)',
     "PRODUCT_END_TIME": r'（(\d{1,2}/\d{1,2} \d{1,2}:\d{2})終了',
     # 新レイアウト（クラス名がハッシュ化されているため属性・文言で抽出する）
-    "V2_TITLE_LINK":   r'<a[^>]+href="([^"]+)"[^>]+_cl_link:tc[^>]*?title="([^"]*)"',
+    "V2_TITLE_LINK":   r'<a[^>]+href="([^"]+)"[^>]+_cl_link:t[bc][;"][^>]*?title="([^"]*)"',
     "V2_PRICE":        r'(?:現在|即決)</span><span[^>]*>([\d,]+)',
     "V2_POSTAGE":      r'</span></span></div><p[^>]*>(.*?)</p>',
     "V2_RATING":       r'>(\d+(?:\.\d+)?)%</span>',
