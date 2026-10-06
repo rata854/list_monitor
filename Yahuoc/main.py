@@ -83,12 +83,21 @@ def make_driver(headless=True):
     return webdriver.Chrome(service=service, options=options)
 
 
-def page_text_head(source, n=200):
-    """想定外ページの判別用に、タグとURLを除いた本文の先頭を返す。"""
+def page_text(source):
+    """想定外ページの判別用に、script/style・タグ・URLを除いた本文テキストを返す。"""
     text = re.sub(r"(?is)<(script|style).*?</\1>", " ", source)
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"https?://\S+", "", html.unescape(text))
-    return re.sub(r"\s+", " ", text).strip()[:n]
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def page_text_head(source, n=200):
+    return page_text(source)[:n]
+
+
+def page_text_tail(source, n=300):
+    """共通ヘッダーに隠れる本体側の文言を見るため、末尾も出す。"""
+    return page_text(source)[-n:]
 
 
 def skip_reason(source):
@@ -254,7 +263,7 @@ def fetch_products(driver, url):
             reason = "no_cards"
         print(
             f"[DEBUG] reason={reason} {stats} id_matches={id_matches} "
-            f"li_cards={li_count} block_hints={len(hints)} text={page_text_head(source)}",
+            f"li_cards={li_count} block_hints={len(hints)} text={page_text_head(source)} ... tail={page_text_tail(source)}",
             flush=True,
         )
         return [], reason
@@ -284,7 +293,7 @@ def matches(product, watch):
 def load_watch_list(supabase):
     resp = supabase.table("product_list").select(
         "asin_sell, product_code_out, must_keywords, excluded_keywords, final_price, yahuoc_store_url, yahuoc_all_url"
-    ).execute()
+    ).order("asin_sell").execute()
     print(f"  product_list 取得件数: {len(resp.data)}", flush=True)
 
     filtered = [r for r in resp.data if r.get("asin_sell") and r.get("product_code_out") and r.get("final_price")
