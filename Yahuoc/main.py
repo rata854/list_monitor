@@ -8,6 +8,7 @@ import traceback
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import pytz
 from selenium import webdriver
@@ -24,6 +25,8 @@ load_dotenv(Path(__file__).parents[3] / ".secrets" / "github_actions.env")
 CONFIG = {
     "PRICE_THRESHOLD": 10000,
     "PAGE_LOAD_TIMEOUT": 15,
+    # 検索URLのパラメータを上書きする（表示件数は最小の20、発送先は青森県）
+    "URL_OVERRIDES": {"n": "20", "dest_pref_code": "2"},
     "SLEEP_MIN": 8.0,
     "SLEEP_MAX": 12.0,
     "SKIP_PATTERN1": "に一致する商品はありません",
@@ -66,6 +69,13 @@ def parse_end_time(text):
         return f"{year}-{end_month:02d}-{end_day:02d} {time_part.zfill(5)}"
     except Exception:
         return ""
+
+
+def apply_url_overrides(url):
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.update(CONFIG["URL_OVERRIDES"])
+    return urlunsplit(parts._replace(query=urlencode(query)))
 
 
 def random_sleep(min_sec, max_sec):
@@ -406,6 +416,7 @@ def _run(supabase, now_jst, limit=None):
             search_url = watch.get("yahuoc_all_url")
             if not search_url:
                 continue
+            search_url = apply_url_overrides(search_url)
 
             products, reason = fetch_products(driver, search_url)
             if reason not in CONFIG["EXPECTED_REASONS"]:
@@ -414,6 +425,8 @@ def _run(supabase, now_jst, limit=None):
                 products, reason = fetch_products(driver, search_url)
             reasons[reason] += 1
             print(f"検索 {i + 1}/{len(watch_list)}: {len(products)}件取得 ({reason})", flush=True)
+            if len(products) >= int(CONFIG["URL_OVERRIDES"]["n"]):
+                print(f"[WARN] 検索 {i + 1}/{len(watch_list)}: 表示上限に達しました。2ページ目以降は未取得です", flush=True)
 
             if reason not in CONFIG["EXPECTED_REASONS"]:
                 aborted = {"index": i + 1, "reason": reason}
