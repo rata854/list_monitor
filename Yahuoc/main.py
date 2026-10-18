@@ -45,6 +45,10 @@ CONFIG = {
     "V2_PRICE":        r'(?:現在|即決)</span><span[^>]*>([\d,]+)',
     "V2_POSTAGE":      r'</span></span></div><p[^>]*>(.*?)</p>',
     "V2_RATING":       r'>(\d+(?:\.\d+)?)%</span>',
+    # 検索結果本体の範囲。先頭の「注目」枠と末尾のおすすめ枠は検索条件の結果ではないため除外する
+    "V2_MAIN_START":   '>すべての商品</span>',
+    "V2_PICKUP_HEAD":  '>注目のオークション</span>',
+    "V2_MAIN_END":     'id="featuredItems"',
     # 取得失敗時にページ種別を推測するための語（認証/アクセス制限画面など）
     "BLOCK_HINTS": ["認証", "アクセスが集中", "ロボット", "captcha", "Access Denied"],
 }
@@ -127,8 +131,24 @@ def parse_postage(text):
     return None
 
 
+def main_results_source(source):
+    """注目枠・おすすめ枠を除いた検索結果本体の範囲を返す。
+
+    見出しが無いページはそのまま返す。注目枠だけ見つかり本体の見出しが無い場合は
+    判別できないため空を返し、想定外ページとして扱わせる。
+    """
+    start = source.find(CONFIG["V2_MAIN_START"])
+    if start >= 0:
+        source = source[start:]
+    elif CONFIG["V2_PICKUP_HEAD"] in source:
+        return ""
+    end = source.find(CONFIG["V2_MAIN_END"])
+    return source[:end] if end >= 0 else source
+
+
 def parse_products_v2(source):
     """新レイアウト用。タイトルリンクを起点に、次のタイトルリンクまでを1商品として抽出する。"""
+    source = main_results_source(source)
     links = list(re.finditer(CONFIG["V2_TITLE_LINK"], source))
     products = []
     seen_ids = set()
