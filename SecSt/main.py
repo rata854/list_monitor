@@ -30,6 +30,9 @@ CONFIG = {
     "SLEEP_MAX": 4.0,
     "DETAIL_SLEEP_MIN": 2.0,
     "DETAIL_SLEEP_MAX": 4.0,
+    "BLOCKED_MARKER": "Access Denied",
+    "EMPTY_MARKER": "ご希望の条件で商品は見つかりませんでした",
+    "MAINT_MARKER": "システムメンテナンスのお知らせ",
 }
 
 SEARCH_PATHS = [
@@ -65,19 +68,30 @@ def make_driver():
     return webdriver.Chrome(service=service, options=options)
 
 
+def classify_empty_page(source):
+    if CONFIG["BLOCKED_MARKER"] in source[:2000]:
+        return "blocked"
+    if CONFIG["MAINT_MARKER"] in source:
+        return "maintenance"
+    if CONFIG["EMPTY_MARKER"] in source:
+        return "empty"
+    return "unknown"
+
+
 def fetch_listing_page(driver, url):
+    """(商品リスト, 理由) を返す。理由: ok / blocked / maintenance / empty / unknown"""
     driver.get(url)
     try:
         WebDriverWait(driver, CONFIG["PAGE_LOAD_TIMEOUT"]).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "li.itemCard"))
         )
     except Exception:
-        return []
+        return [], classify_empty_page(driver.page_source)
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     cards = soup.select("li.itemCard")
     if not cards:
-        return []
+        return [], classify_empty_page(driver.page_source)
 
     base = os.environ["SECST_BASE_URL"].rstrip("/")
     products = []
@@ -102,7 +116,7 @@ def fetch_listing_page(driver, url):
         if product_url and name:
             products.append({"url": product_url, "name": name, "price": price, "image": image})
 
-    return products
+    return products, "ok" if products else "unknown"
 
 
 RANK_CLASS_MAP = {
@@ -230,15 +244,17 @@ def _run(supabase, now_jst):
 
     all_products = []
     deduped = []
+    page_stats = []
     driver = make_driver()
     try:
         for i, search_url in enumerate(search_urls):
             for page in range(1, CONFIG["FETCH_PAGES"] + 1):
                 page_url = set_page_param(search_url, page)
                 print(f"取得中: page={page} (path={i+1}/{len(search_urls)})", flush=True)
-                products = fetch_listing_page(driver, page_url)
+                products, reason = fetch_listing_page(driver, page_url)
                 all_products.extend(products)
-                print(f"  → {len(products)}件", flush=True)
+                page_stats.append({"path": i + 1, "page": page, "count": len(products), "reason": reason})
+                print(f"  → {len(products)}件 ({reason})", flush=True)
                 if not products:
                     break
                 random_sleep(CONFIG["SLEEP_MIN"], CONFIG["SLEEP_MAX"])
@@ -248,18 +264,24 @@ def _run(supabase, now_jst):
         print(f"取得商品数（重複除去後）: {len(deduped)}", flush=True)
 
         if not deduped:
+            reasons = {s["reason"] for s in page_stats}
+            debug = {
+                "watch_list_count": len(watch_list),
+                "products_fetched": 0,
+                "paths_count": len(SEARCH_PATHS),
+                "pages_per_path": CONFIG["FETCH_PAGES"],
+                "page_stats": page_stats,
+            }
+            if "unknown" not in reasons:
+                print(f"[WARN] 商品0件（原因: {','.join(sorted(reasons))}）。構造変更ではないためスキップ", flush=True)
+                return {"status": "skipped", "exit_code": 0, "severity": "warning", "debug_info": debug}
             print("[ERROR] 商品カード取得0件（HTML構造変更の可能性）", flush=True)
             return {
                 "status": "failure",
                 "exit_code": 1,
                 "error_type": "NoProductsFetched",
                 "error_message": "商品カード取得0件",
-                "debug_info": {
-                    "watch_list_count": len(watch_list),
-                    "products_fetched": 0,
-                    "paths_count": len(SEARCH_PATHS),
-                    "pages_per_path": CONFIG["FETCH_PAGES"],
-                },
+                "debug_info": debug,
             }
 
         today = now_jst.strftime("%Y-%m-%d")
